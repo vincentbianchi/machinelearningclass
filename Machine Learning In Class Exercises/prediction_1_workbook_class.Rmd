@@ -1,0 +1,572 @@
+---
+title: "Prediction 1"
+author: "Machine Learning"
+date: "1 September 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Load Packages
+
+```{r Load Packages}
+# install.packages("randomForest")
+# install.packages("rpart")
+# install.packages("caret")
+library(randomForest) # Load randomForest package to run bagging
+library(rpart) # Load rpart for decision trees
+library(caret) # Used for analysing results
+library(splitstackshape) # Used for stratified sampling
+```
+
+
+
+## Workbook Objectives
+
+In this workbook we will cover:
+
+* Applying bagging
+* Extracting a single bagged tree
+* Predicting new data using bagging
+* Summary performance statistics
+* Cross-validation
+* Bagging variable importance 
+* Partial Dependency plots
+* MDSplots
+* Identifying Outliers
+
+## Preparation
+
+For this analysis we will use the UFC bout data. This data is stored as `ufc_dat.rda`. Lets first load the data into the workspace:
+
+```{r Load data}
+load("ufc_model_data.rda") # Load data
+```
+
+In this dataset there are 7868 rows corresponding to 3934 bouts with a row for each fighter and bout. The data has been split into a training set with 6,296 observations and a test set with 1,572 observations.
+
+#### Summary Statistics
+
+We first want to check the first rows, last rows, and dimension of our datasets. 
+
+```{r Data features}
+head(train_data) # Check first few rows of data
+tail(train_data) # Check last few rows of data
+dim(train_data) # Check dimension of data
+
+```
+
+We see from the dimension that we have 69 variables in our dataset, we can view a summary of these as:
+
+
+```{r Check names}
+summary(train_data) # Summarise data
+
+```
+
+These are:
+
+* 1. fighter - Fighter name
+* 2. opponent - opponent name
+* 3. outcome - Fight outcome
+* 4. rank_difference - Difference in rank
+* 5. title_bout - If the fight is a title fight
+* 6. weight_class - Weight class of the fight
+* 7. lose_streak - Current losing streak length
+* 8. win_streak - Current winning streak length
+* 9. draws - Number of draws the fighter has
+* 10. avg_sig_strike_pm - Average number of significant strikes per minute
+* 11. avg_sig_strike_acc - Average significant strikes per minute  
+* 12. avg_sub_pm - Average submissions per minute
+* 13. avg_td_pm - Average take downs per minute
+* 14. avg_td_acc - Average take down accuracy
+* 15. long_win_streak - Longest win streak
+* 16. losses - Number of losses
+* 17. total_rds - Total rounds the fighter has fought
+* 18. title_bouts - Title bouts the fighter has had
+* 19. win_dec_maj - Number of wins by majority decision
+* 20. win_dec_spl - Number of wins by split decision
+* 21. win_dec_uni - Number of wins by unanimous decision
+8 22. win_tko - Number of wins by TKO 
+* 23. win_sub - Number of submission wins
+* 24. win_tko.1 - Number of wins by opponent quitting
+* 25. wins - Number of wins
+* 26. stance - Athlete stance
+* 27. height - Athlete Height
+* 28. reach - Athlete reach     
+* 29. weight - Athlete weight
+* 30. age - Athlete age 
+* 31. - 54 - Same as 7-30 but for opponent
+* 55. lose_streak_diif -  Difference in losing streaks
+* 56. win_streak_diff - Difference in win streaks
+* 57. long_win_diff - Longest win streak difference
+* 58. win_diff - Number of wins difference
+* 59. loss_diff - Number of losses difference
+* 60. round_diff - Total rounds fought difference
+* 61. bout_diff - Number of bouts difference
+* 62. ko_diff - Number of knockouts difference
+* 63. height_diff - Difference in height
+* 64. reach_diff - Difference in reach
+* 65. age_diff - Difference in age
+* 66. sig_str_diff - Significant strike difference
+* 67. sub_diff - Submissions per minute difference
+* 68. td_diff - Takedowns per minute difference
+* 69. acc_diff - Accuracy of significant strike differences
+
+For this analysis we will not use the fighter names in our model.
+
+For our response variable we will use `outcome`
+```{r view outcome}
+summary(train_data$outcome) # Summarise outcome
+```
+
+So we have an even numbers of wins and losses (as expected) and there are no draws in the dataset.
+
+#### First attempt at prediction
+
+As a comparison for our bagging model lets first try a single classification tree. 
+
+```{r Try tree}
+# Try classification tree
+tree_model <- rpart(outcome ~., # Set tree formula
+                data = train_data[,3:69]) # Set dataset
+
+```
+
+We now have  a classification tree model `tree_model`. Next we want to see how this model performs on the test dataset. Predictions for the test data can be produced for the using the `predict()` function. 
+
+```{r Predict tree}
+# Predict with classification tree
+tree_preds <- predict(tree_model, test_data, type = "class")
+```
+
+To analyse the results from the model we can use a confusion matrix. 
+
+```{r Analyse results from logistic regression and classification tree}
+# Confusion matrix for single tree
+t <- table(tree_preds,test_data$outcome) # Create table
+confusionMatrix(t, positive = "Win") # Produce confusion matrix
+
+```
+
+These is not a great model with an accuracy of `0.5261` for our classification tree. 
+
+## Boostrap Aggregation (Bagging)
+
+We will now try bagging. For this we use the `randomForest()` function and set the `mtry` parameter equal to the number of variables in the dataset. 
+
+
+```{r Apply bagging}
+set.seed(258506) # Set random number generator seed for reproducability
+# Use random forest to do bagging
+bag_mod <- randomForest(outcome ~., # Set tree formula
+                data = train_data[,3:69], # Set dataset
+                mtry = 66, # Set mtry to number of variables 
+                ntree = 200) # Set number of trees to use
+bag_mod # View model
+
+
+bag_preds <- predict(bag_mod, test_data) # Create predictions for bagging model
+
+t <- table(bag_preds,test_data$outcome) # Create table
+confusionMatrix(t,  positive = "Win") # Produce confusion matrix
+```
+
+By using bagging we achieved a test set error rate of `0.5808` compared to `0.5261` for our classification tree. The difference is  substantial compared to the single tree model. 
+
+We can extract a single tree from the bagging model by running: 
+```{r Extract single tree}
+tree_1 <- getTree(bag_mod, 3, labelVar=TRUE) # Extract single tree,
+head(tree_1) # Print first 5 rows of single tree details (1813) rows total
+```
+
+
+One of the benefits of using the randomForest function is that we can see the out-of-bag error for the tree as each tree is built. We can then plot these to analyse if the model has converged to the optimal solution or is still converging.
+
+
+```{r plot Error}
+
+oob_error <- bag_mod$err.rate[,1] # Extract oob error
+plot_dat <- cbind.data.frame(rep(1:length(oob_error)), oob_error) # Create plot data
+names(plot_dat) <- c("trees", "oob_error") # Name plot data
+
+
+# Plot oob error
+g_1 <- ggplot(plot_dat, aes(x = trees, y = oob_error)) + # Set x as trees and y as error
+  geom_point(alpha = 0.5, color = "blue") + # Select geom point
+  geom_smooth() + # Add smoothing line
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error Rate v Number of Trees",
+       y = "Error Rate")  # Set labels
+g_1 # Print plot
+```
+
+From this plot we can see that as the number of trees increase the error rate continues to fall as the number of trees increases. Lets try increasing the number of trees to 1,000 and see if we will get continued improvement. Remember that in general we do not need to worry about overfitting with regards to bagging models. In general the more complex a problem is the more trees we will need to create to get optimal performance.
+
+```{r try 1000 trees}
+bag_mod_2 <- randomForest(outcome ~., # Set tree formula
+                data = train_data[,3:69], # Set data to use
+                mtry = 66, # Set number of variables to use
+                ntree = 1000) # Set number of trees
+
+oob_error <- bag_mod_2$err.rate[,1] # Extract oob error
+plot_dat <- cbind.data.frame(rep(1:length(oob_error)), oob_error) # Create plot data
+names(plot_dat) <- c("trees", "oob_error") # Name plot data
+
+
+# Plot oob error
+g_2 <- ggplot(plot_dat, aes(x = trees, y = oob_error)) + # Set x as trees and y as error
+  geom_point(alpha = 0.5, color = "blue") + # Select geom point
+  geom_smooth() + # Add smoothing line
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error Rate v Number of Trees",
+       y = "Error Rate")  # Set labels
+g_2 # Create plot
+```
+
+Here we see that initially the error rate falls significantly and then levels off after about 250 trees, though there is a slight continuous improvement as the number of trees increases. Lets see how this model performs on our test dataset:
+
+```{r}
+bag_preds_2 <- predict(bag_mod_2, test_data) # Predict test data
+
+t <- table(bag_preds_2,test_data$outcome) # Create table
+confusionMatrix(t,  positive = "Win") # Produce confusion matrix
+```
+
+Here we see that by using a larger number of trees we actually suffered a small decrease in accuracy from `0.5814` to `0.5712`. This is not a significant change, but does validate what we saw in the error rate plot, in that the out of bag error rate for the model did not improve significantly from 500 to 1000 trees.
+
+### Parameter tuning
+
+Perhaps we can get some improvement from the model by tuning the parameters. The parameters we can tune for a bagging model are:
+
+* Number of trees - The number of trees that we build for each model
+* Node Size - The minimum size of the terminal nodes. Higher values lead to shallower trees while larger values lead to deeper trees.
+
+We have so far used a node size of 1 and built 200 and 1,000 trees. Lets try a variety of different node size and tree size parameters and see what the results are like. To do this we can loop through multiple different sets of parameters and calculate the out of bag error rate for each different combination. We can then select the set of parameters which lead to the lowest out of bag error. 
+```{r Parameter Tuning}
+# Careful this can take a long time to run
+trees <- c(10, 25, 50, 100, 200, 500, 1000) # Create vector of possible tree sizes
+nodesize <- c(1, 10, 25, 50, 100, 200, 500, 1000) # Create vector of possible node sizes
+
+params <- expand.grid(trees, nodesize) # Expand grid to get data frame of parameter combinations
+names(params) <- c("trees", "nodesize") # Name parameter data frame
+res_vec <- rep(NA, nrow(params)) # Create vector to store accuracy results
+
+for(i in 1:nrow(params)){ # For each set of parameters
+  set.seed(987654) # Set seed for reproducability
+  mod <- randomForest(outcome ~. , # Set formula
+                      data=train_data[,3:69],# Set data
+                      mtry = 66, # Set number of variables
+                      importance = FALSE,  # 
+                      ntree = params$trees[i], # Set number of trees
+                      nodesize = params$nodesize[i]) # Set node size
+  res_vec[i] <- 1 - mod$err.rate[nrow(mod$err.rate),1] # Calculate out of bag accuracy
+}
+```
+
+The out of bag accuracy rates are stored in the `res_vec` vector. Lets have a look at the range of values achieved:
+
+```{r Summarize tuning}
+summary(res_vec) # Summarize accuracy results
+```
+
+We can analyse the combinations of parameters and their out of bag error rate by joining the accuracy rate to the parameter data frame:
+
+```{r view param combs}
+res_db <- cbind.data.frame(params, res_vec) # Join parameters and accuracy results
+names(res_db)[3] <- "oob_accuracy" # Name accuracy results column
+res_db # Print accuracy results column
+
+```
+
+We can also visualize this result in a heatmap. We will use the mean out of bag error rate as the mid point for our plot, so blue values will be better than average performance whereas red values will indicate worse performance. We can also use `which.max()` to extract the best set of parameters, this returns the index of the highest value. 
+
+```{r heatmap }
+
+res_db$trees <- as.factor(res_db$trees) # Convert tree number to factor for plotting
+res_db$nodesize <- as.factor(res_db$nodesize) # Convert node size to factor for plotting
+g_2 <- ggplot(res_db, aes(y = trees, x = nodesize, fill = oob_accuracy)) + # set aesthetics
+  geom_tile() + # Use geom_tile for heatmap
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+    mid = "white", # Choose mid color
+    high = "red", # Choose high color
+    midpoint =mean(res_db$oob_accuracy), # Choose mid point
+    space = "Lab", 
+    na.value ="grey", # Choose NA value
+    guide = "colourbar", # Set color bar
+    aesthetics = "fill") + # Select aesthetics to apply
+  labs(x = "Node Size", y = "Number of Trees", fill = "OOB Accuracy") # Set labels
+g_2 # Generate plot
+res_db[which.max(res_db$oob_accuracy),] # View best set of results
+```
+
+From this we can see that low node sizes and low numbers of trees generally perform worse while node sizes of greater than 200 and greater numbers trees seem to perform best with the highest out of bag accuracy achieved at 1000 trees and a minimum node size of 500. My thoughts on this would be:
+
+* Models with deeper trees appear to perform worse (low node size) - The individual samples in the dataset can be quite distinct from each other, that is individual fighter profiles can be quite different. Thus when we use small node sizes and put each sample into its own node (node size 1) or a small number of nodes the model captures peculiarities of those particular samples which translates poorly to new samples. This can be countered for by using a large number of trees but we do not get the accuracy levels we want. Instead it appears that using a node size of 200 provides optimal out of bag accuracy. To me this would indicate that growing shorter trees allows the model to capture the main trends in the dataset without paying attention to the small differences. 
+* A suitable number of trees for this model appears to be about 500-1000. The reason a higher number of trees improves accuracy for small node sizes is that the peculiarities of the individual fights begin to wash out after using a large number of trees. 
+
+Lets take our optimally detected parameters of node size 500 and tree size 200 and try them out:
+
+```{r op param tree}
+set.seed(123456)
+bag_mod_3 <- randomForest(outcome ~., # Set tree formula
+                data = train_data[,3:69], # Set dataset
+                mtry = 66, # Set number of variables 
+                ntree = 200, # Set number of trees
+                nodesize = 500) # Set node size
+
+bag_preds_3 <- predict(bag_mod_3, test_data) # Create predictions for test data
+
+
+t <- table(bag_preds_3,  test_data$outcome) # Create table
+confusionMatrix(t,  positive = "Win") # Produce confusion matrix
+```
+
+This model actually had an accuracy rate of `0.5642` which is worse than our original model at `0.5814` but again the difference is unlikely to be significant and it is still an improvement over our single tree model. 
+
+
+## Cross-validation
+
+Instead of splitting the data we could also estimate the test error rate for our model using cross-validation:
+
+```{r CV run}
+set.seed(123456) # Set seed for reproducability
+# Create cross-validation index
+cv_ind <- sample(1:5, nrow(train_data), replace = TRUE )
+
+# Create accuracy store
+cv_acc <- rep(NA, 5)
+for(i in 1:5){ # For 1 to 5
+  cv_train <- train_data[cv_ind != i ,c(3:69)] # Create training data
+  cv_test <- train_data[cv_ind == i,  c(3:69)] # Create test data
+
+  bag_mod_3 <- randomForest(outcome ~., # Set tree formula
+                data = cv_train, # Set dataset
+                mtry = 66, # set number of variables to use
+                ntree = 200, # Set number of trees to generate
+                nodesize = 500) # Set node size
+  bag_preds_3 <- predict(bag_mod_3, cv_test) # Create test data predictions
+
+
+  t <- table(bag_preds_3,cv_test$outcome) # Create table
+  cf_mat <- confusionMatrix(t,  positive = "Win") # Create confusion matrix
+  cv_acc[i] <- cf_mat$overall[1] # Extract accuracy
+}
+
+# Print cross validated accuracy scores
+cv_acc
+# Get mean of accuracy scores
+mean(cv_acc)
+```
+
+
+## Other Features of Bagging
+
+There are several other features of bagging which we can take advantage of including:
+
+* Variable importance
+* Partial Dependency Plots
+* Multi-dimensional Scaling
+
+We will look at each in turn
+
+
+### Variable Importance
+First lets look at variable importance. To this we need to tell the function to calculate variable importance as it fits the model. We can then extract the importance by running `importance()`. We will use a smaller number of trees as the importance matrix and proximity can take some time to run. 
+```{r Calculate variable importance for bagging}
+bag_mod_4 <- randomForest(outcome ~., # Set tree formula
+                data = train_data[,3:69], # Set dataset
+                mtry = 66, # Set number of variables to try  
+                ntree = 200, # Set number of trees
+                nodesize = 200,  # Set node size
+                importance = TRUE, # Set to true to generate importance matrix
+                proximity = TRUE) # Set to true to generate proximity matrix
+# Extract Importance
+importance_matrix <- randomForest::importance(bag_mod_4)
+# Print importance matrix
+importance_matrix
+```
+
+We can also plot the importance matrix results:
+
+```{r Plot importance}
+varImpPlot(bag_mod_4, type =2, n.var = 10) # Plot importance
+```
+
+Here we see that age is a key factor along with differences in significant strike rates, reach, long win streaks and accuracy. 
+
+
+### Partial dependency
+
+We can look at the relationship between the top variables and the response using a partial dependency plot. The partial dependency plot gives a graphical depiction of the marginal effect of a variable on the class probability
+
+```{r partial dependency}
+partialPlot(bag_mod_4 , train_data, x.var = "sig_str_diff", which.class = "Win") # Generate partial dependency plot for difference in significant strikes
+partialPlot(bag_mod_4 , train_data, x.var = "reach_diff", which.class = "Win") # Generate partial dependency plot for differences in reach
+partialPlot(bag_mod_4 , train_data, x.var = "avg_sig_strike_pm", which.class = "Win") # Generate partial dependency plot for
+```
+
+
+### Proximity Plot
+
+We can also create a proximity plot to visualize the similarity of the points in the dataset in two dimensions:
+
+```{r proximity plot}
+# Can take a long time to run
+MDSplot(bag_mod_4, train_data$outcome, k=2, palette= c("red", "blue")) # Plot proximity matrix
+```
+
+
+## Exercises 
+
+For this analysis we will try to predict shots in the NBA. Let's load the data:
+
+```{r}
+# Load dataset
+load("nba_shot_logs.rda")
+```
+
+We can summarize the data by running:
+
+```{r}
+# Summarise dataset
+summary(shot_logs)
+```
+
+The variables we have are:
+
+* GAME_CLOCK - The number of seconds left in the game
+* PERIOD - The game quarter or overtime period
+* SHOT_CLOCK - The number of seconds left on the shot clock
+* DRIBBLES - The number of dribbles taken by the player
+* TOUCH_TIME - How long the player held the ball
+* SHOT_DIST - The distance of the shot
+* PTS_TYPE - The type of points the shot is
+* CLOSEST_DEF_DIST - The distance of the closest defender
+* player_rate -  The usual accuracy rate of the player taking the shot
+* SHOT_RESULT - The result of the shot
+
+We are trying to predict the result of the shot. Let's analyse this further:
+```{r}
+# Summarize shot result
+summary(as.factor(shot_logs$SHOT_RESULT))
+```
+
+We see we have 55,880 shots that were made, and 66,622 made. Let's convert the response variable into a factor so we can use it in the models we build:
+
+```{r}
+# Convert shot logs to factors
+shot_logs$SHOT_RESULT <- as.factor(shot_logs$SHOT_RESULT)
+
+```
+
+Please attempt the following exercises:
+
+* 1 -  Create a visualization revealing a variable with predictive power in the shot logs dataset.
+
+```{r}
+partialPlot(bag_mod_4 , train_data, x.var = "SHOT_RESULT", which.class = "Win")
+```
+
+
+* 2 - Split the data into training (80%) and test (20%) sets with an equal proportion of made and missed shots in each set. (Hint: Use the stratified function from the splitstackshape package)
+
+
+
+* 3 - Apply a bagging model to the dataset.
+
+
+
+* 4 - Visualize and decide the optimal number of iterations for the bagging model.
+
+
+
+
+* 5 - Build a model using the optimal number of iterations.
+
+
+
+* 6 - Apply the model to the test dataset
+
+
+
+* 7 - Analyse your results using a confusion matrix. 
+
+
+
+* 8 - Extract and plot variable importance from the bagging model.
+
+
+
+* 9 - What factors are most important in determining if a shot will be successful or not?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,211 @@
+---
+title: "Linear Regression Assignment"
+author: "Mendoza College of Business"
+date: "02/09/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Vincent Bianchi 11/6/2023
+
+# Set Up
+
+```{r}
+load("nba_data.rda") # Load data
+```
+
+
+The dataset we are using contains statistics on NBA games from 2010 to 2021, the features in the data are:
+
+The statistics calculated are:
+
+* fgm - Field goals made
+* fga - Field goals attempted
+* fg3m - 3 point shots made
+* fg3a - 3 point shots attempted
+* fg2m - 2 point shots made
+* fg2a - 2 point shots attempted
+* ftm - Free throws made
+* fta - Free throws attempted
+* oreb - Offensive rebounds
+* dreb - Defensive rebounds
+* treb - Total rebounds
+* ast - Assists
+* stl - Steals
+* blk - Blocks
+* tov - Turnovers
+* pf - Personal fouls
+* pts - Points scored
+* pctfg - Field goal percentage
+* pctfg2 - 2 point field goal percentage
+* pctfg3 - 3 point field goal percentage
+* pctft - Free throw percentage
+
+These are calculated for the different aspects of the matchup denoted by the following adjustments to the variable names:
+
+* _1_off - Offensive stats for team 1 in previous games
+* _1_def - Defensive stats for team 1 in previous games (That is stats from team 1's opponents)
+* _2_off - Offensive stats for team 2 in previous games
+* _2_def - Defensive stats for team 2 in previous games (That is stats from team 2's opponents)
+
+There is also an ELO rating function which can be used to provide a ranking of the teams:
+
+https://medium.com/purple-theory/what-is-elo-rating-c4eb7a9061e0
+
+The objective of our analysis is to determine the key factors involved in winning NBA games, so we will use point differential as our response variable.
+
+```{r}
+# Create response variable
+nba_data$point_diff <- nba_data$team_1_points - nba_data$team_2_points
+```
+
+Before running the model we want to drop all of the unique identifiers for the games and the points used to calculate the differential:
+
+```{r}
+# Drop columns 
+nba_model <- nba_data[,c(8:91, 94:96)]
+```
+
+
+# Assignment
+
+Please complete the following tasks and answer the following questions:
+
+
+* 1 - Create two visualizations which may reveal interesting relationships in the data set. Describe what you see in the visualization. (2 Points) 
+
+```{r}
+library(ggplot2) 
+
+# summarizing the data 
+summary(nba_data)
+
+# Creating a density plot for point differential 
+graph1 <- ggplot(nba_model, aes(x = point_diff)) + 
+  geom_density(fill = "darkred", alpha = 0.3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(x = "Point Differetial", 
+       title = "Density Plot of Point Differentials")
+graph1
+```
+Description of Visualization:
+In my first visualization I created a density plot of point differential. The density plot shows that in a given game teams wind up winning/losing within a range of 30 points most games. The density plot takes a dip at the 0 on the x-axis. This is to be expected because no games in the NBA end in a tie.
+
+```{r}
+
+graph2 <- ggplot(nba_model,  
+              aes(y = nba_model$pctft_1_off,
+                  x = nba_model$fg3m_1_off)) + 
+  geom_point(color = "darkblue", alpha = 0.3) + 
+  geom_smooth( method = "lm") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(y = "Free Throw Percentage", # Set plot labels
+       x = "Three Pointers Made",
+       title = "Free Throw Percentage v Three Pointers Made")
+
+graph2
+
+```
+Description of Visualization:
+In my second visualization I wanted to visualize if three pointers made had any relationship to a teams free throw percentage. My line of thinking was that if a team makes a lot of three pointers, it should mean that they are skilled at shooting thus their free throw percentage should have some positive correlation. The graph shows that there is some positive correlation between the two variables however the relationship is not strong.
+
+* 2 - Run a linear regression model on the dataset using `point_diff` as the response variable and all other variables in the model data as explanatory variables. (1 Point)
+
+```{r}
+
+lm1 <- lm(point_diff ~ .,
+            data = nba_model)
+
+summary(lm1)
+
+```
+
+* 3 - What features in the model were significant (At 0.1% level)? Do these variables have a positive or negative effect on a teams chance of winning a game? (1 Point)
+
+Answer:
+The features in the model that were significant at the 0.1% level were `elo_1`, `elo_2`, `ast_2_def`, `ast_1_def`, `tov_1_off`, `stl_1_off` and `dreb_1_off`. These variables as a whole had a mix of both a positive and negative effect on a teams chance of winning a game. The variables that have a positive effect on a teams chance to win a game are `elo_1`, `ast_2_def`, `stl_1_off` and `dreb_1_off`. The variables that have a negative effect on a teams chances to win a game are `elo_2`, `ast_1_def`, `tov_1_off`.
+
+
+* 4 - Visualize two potential interaction terms and their relationship with the response variable. Are these interaction terms likely to have a significant relationship with the response variable? (2 Points)
+
+```{r}
+
+nba_model$interaction_term1 <- (nba_model$fga_1_off)*(nba_model$oreb_1_off)
+  
+graph3 <- ggplot(nba_model,  
+              aes(y = nba_model$point_diff,
+                  x = nba_model$interaction_term1)) + 
+  geom_point(color = "darkblue", alpha = 0.1, size = 0.1) + 
+  geom_smooth( method = "lm") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(y = "Point Difference", # Set plot labels
+       x = "Interaction Term",
+       title = "Point Difference v Field Goal Attempts + Offensive 
+       Rebounds")
+
+graph3
+
+```
+
+```{r}
+nba_model$interaction_term2 <- (nba_model$pf_1_off)*(nba_model$tov_1_off)
+
+graph4 <- ggplot(nba_model,  
+              aes(y = nba_model$point_diff,
+                  x = nba_model$interaction_term2)) + 
+  geom_point(color = "black", alpha = 0.1, size = 0.1) + 
+  geom_smooth( method = "lm") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(y = "Point Difference", # Set plot labels
+       x = "Interaction Term",
+       title = "Point Difference v Personal Fouls + Turn Overs")
+
+graph4
+
+```
+Answer:
+The interaction terms did not have a significant relationship with the response variable as shown by the weak correlation in the graphs I created.
+
+
+* 5 - Fit a linear regression model with the two interaction terms included. (1 Point)
+
+```{r}
+
+summary(nba_model)
+
+# here I am removing an excess column that I created
+nba_model <- nba_model[, -88]
+
+lm2 <- lm(point_diff ~ .,
+            data = nba_model)
+
+summary(lm2)
+
+```
+
+* 6 - How has the inclusion of the interaction terms affected the coefficients in the model? How has the inclusion of interaction terms affected the model fit? (1 Point)
+
+The inclusion of interaction terms had a negligible affect on the coefficients in the model and the overall quality of the model fit.
+
+
+
+2 Points for code quality and analysis decisions.

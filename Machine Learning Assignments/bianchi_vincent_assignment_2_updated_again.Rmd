@@ -1,0 +1,190 @@
+---
+title: "Assignment 2 - Logistic Regression"
+author: "Vincent Bianchi ITAO 40420 - Machine Learning"
+date: "29 January 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Assignment 2
+
+For this analysis we will be using churn data. The dataset is stored as `churn_data.rda` which can be loaded in by running the below command if the file is located in your working directory or else by accessing the file through file->open file
+
+```{r Load Data 2}
+load("churn_data.rda") # Load churn dataset
+```
+
+We can view a summary of this dataset by running `summary()`:
+
+```{r}
+summary(churn_data)
+```
+
+The variables we have are:
+
+* Gender - Whether the customer is a male or a female
+* SeniorCitizen - Whether the customer is a senior citizen or not (1,0)
+* Partner - Whether the customer has a partner or nor (Yes, No)
+* Dependents - Whether the customer has dependents or not (Yes, No)
+* tenure - Number of months the customer has stayed with the company
+* PhoneService - Whether the customer has a phone service of no (Yes, No)
+* MultipleLines - Whether the customer has multiple lines or not (Yes, No, No phone service)
+* InternetService - Customer's internet service provider (DSL, Fiber optic, No)
+* OnlineSecurity - Whether the customer has online security or not (Yes, No, No internet service)
+* OnlineBackup - Whether the customer has online backup or not (Yes, No, No internet service)
+* DeviceProtection - Whether the customer has tech support or not (Yes, No, No internet service)
+* StreamingTV - Whether the customer has streaming TV or not (Yes, No, No internet service)
+* StreamingMovies - Whether the customer has streaming movies or not (Yes, No, No internet service)
+* Contract - The contract term of the customer (Month-to-month, One year, Two year)
+* PaperlessBilling - Whether the customer has paperless billing or not (Yes, No)
+* PaymentMethod - The customer's payment method (Electronic CHECK, Mailed check, Bank transfer (automatic), Credit card (automatic))
+* MonthlyCharges - The amount charged to the customer monthly
+* TotalCharges - The total amount charged to the customer
+* Churn - Whether the customer churned or not (1 = Yes or 0 = No)
+
+
+The response variable for this dataset is `Churn`:
+
+```{r}
+summary(as.factor(churn_data$Churn))
+
+# Do densities
+plot_dat <- churn_data # Create data to use as plot data
+plot_dat$Churn <- as.factor(plot_dat$Churn)
+```
+
+
+For the assignment please carry out the following tasks/answer the following questions: (12 Points)
+
+
+* 1 - Create at least two visualizations potentially revealing factors with predictive power (2 Points)
+
+```{r}
+library(ggplot2)
+graph1 <- ggplot(plot_dat, aes(x = MonthlyCharges, fill = Churn)) + # Set x as MonthlyCharges and fill as churn
+  geom_density(alpha = 0.5) + # Select density plot and set transperancy (alpha)
+    theme_set(theme_bw(base_size = 22) ) + # Set theme and text size
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Monthly Charges", title = "Monthly Charges - Churn v No Churn",
+       fill = "Churn") + # Set labels
+  scale_fill_manual(values = c("1" = "midnightblue", "0" = "goldenrod3"), # Set fill colors manually
+                    labels = c("1" = "Churn", "0" = "No Churn")) # Set labels for fill
+graph1
+```
+
+```{r}
+graph2 <- ggplot(plot_dat, aes(x = tenure, fill = Churn)) + # Set x as tenure and fill as churn
+  geom_density(alpha = 0.5) + # Select density plot and set transperancy (alpha)
+    theme_set(theme_bw(base_size = 22) ) + # Set theme and text size
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Tenure", title = "Tenure - Churn v No Churn",
+       fill = "Churn") + # Set labels
+  scale_fill_manual(values = c("1" = "lightsalmon", "0" = "dodgerblue"), # Set fill colors manually
+                    labels = c("1" = "Churn", "0" = "No Churn")) # Set labels for fill
+graph2 # Generate plot
+```
+
+
+* 2 - Fit a logistic regression model to the data. (Remember you can use `resp ~.,` to include all explanatory variables in the model) (2 Points)
+
+```{r}
+log_reg <- glm(Churn ~ .,
+             family=binomial(link='logit'),
+             data= churn_data)
+
+summary(log_reg)
+
+```
+
+* 3 - What features are significant in your logistic regression model? (1 Point)
+
+```{r}
+
+significance <- rownames(summary(log_reg)$coefficients[summary(log_reg)$coefficients[, 4] <= .001, ])
+
+significance
+
+```
+The features that are significant in the logistic regression model are `r significance`.
+
+* 4 - What is the AIC of your logistic regression model?  (1 Point)
+
+```{r}
+
+log_reg$aic
+
+```
+
+* 5 - Add an interaction term to the logistic regression model? (1 Point)
+
+```{r}
+log_reg_2 <- glm(Churn ~ .+tenure*PaperlessBilling,
+             family=binomial(link='logit'),
+             data= churn_data)
+```
+
+* 6 - Does the addition of the interaction term increase or decrease the AIC? What is the new AIC for the model? (1 Point)
+
+```{r}
+log_reg_2$aic
+```
+
+* 7 - Fit a lasso logistic regression model to the data. (1 Point)
+
+```{r}
+library(glmnet)
+
+# Drop missing values
+x_data <- na.omit(churn_data)
+
+# Scale explanatory variables
+x_data[, c(5, 18, 19)] <- scale(x_data[,c(5, 18, 19)])
+
+x_churn <- model.matrix(~., data = x_data[,-20])[,-1]
+
+set.seed(123)
+l_seq <- 10^seq(4, -4, -.1)
+
+
+
+lasso_model <- cv.glmnet(x = x_churn,
+                y = churn_data$Churn, 
+                alpha = 1, family = "binomial",
+                lambda = l_seq, nfolds = 10)
+
+best_lam <- lasso_model$lambda.1se
+best_lam
+
+bestfit <- glmnet(x = x_churn,
+                y = churn_data$Churn, 
+                alpha = 1, family = "binomial",
+                lambda = best_lam, nfolds = 10)
+
+coef(bestfit)
+
+```
+
+* 8 - Which coefficients were non-zero in the lasso model? Were they positive or negative? What does this imply? (1 Point)
+
+```{r}
+coef(lasso_model)
+
+```
+Answer:
+The coefficients that were non-zero in the lasso model were every variable except monthly charges, total charges, PaymentMethodMailed check,PaymentMethodCredit card (automatic), DeviceProtectionYes, OnlineBackupYes, MultipleLinesNo phone service, PartnerYes, and genderMale. This implys that these variables have a non zero effect on the model.
+
+2 Points for analysis decisions and code quality.
+
+Please submit an an R-markdown document with the answers, optionally you can submit an R-script with the code used for your analysis and a document answering the specific questions, you can use word, pdf etc.
+
+Assignments can be submitted via Canvas or by email to mbarron2@nd.edu. 
+

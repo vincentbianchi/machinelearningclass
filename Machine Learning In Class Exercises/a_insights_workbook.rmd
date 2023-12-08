@@ -1,0 +1,647 @@
+---
+title: "Actionable Insights and P-hacking"
+author: "Machine Learning"
+date: "12 September 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load Packages we will need
+library(xgboost)
+library(pROC)
+library(ggplot2)
+library(tidyverse)
+library(caret)
+library(ggforce)
+source("a_insights_shap_functions.r")
+```
+
+
+## P-hacking
+
+### P-values
+
+What is a p-value - A number between 0 and 1 that helps determine the significance of results. A p-value of less than 0.05 is usually interpreted as a significant result. 
+
+We will also consider the hacking of accuracy results and other performance evaluation metrics.
+
+### P-hacking
+
+The conscious or subconscious manipulation of data in a way that produces a desired p-value. 
+
+This done through manipulating "Researcher Degrees of Freedom" i.e. the decisions made by the investigator.
+
+P-hacking is prevalent throughout the scientific community and industry. Many industries require significant results to publish, usually this is a p-value of less than 0.05. In industry usually a Area Under the Curve of 0.7 is considered sufficient to deploy or implement a model. 
+
+"Even the most skilled researchers must make subjective choices that have a huge impact on the results they find"
+
+We are biased to try and find extreme results from analysis we carry out. 
+
+
+### How to P-hack
+
+P-hacking is usually done after running an initial model to check the results and then altering the analysis process in some way. Some of the options available to do this are:
+
+To alter p-values:
+
+* Decide when to stop or continue the data collection process based on the results currently seen. That is if the results are not significant, collect data until they are and then stop immediately, adding no more samples to the dataset.
+* Transform the data - After applying an initial model, transform the data, trying different transformations until a result is found. 
+* Change the statistical tests and parameters which are being used - If one model does not give significant results then choose a different model or alternate the parameters being used in the model.
+* Include or exclude models from analysis - After running an initial model, add or remove variables from a model until significant results are achieved.
+* Choosing which points are considered outliers - This could be done by running a model and then removing points which are negatively affecting the model significance, classifying them as outliers. 
+* Split the data into subgroups or join subsets of data after running the analysis. 
+
+
+
+To alter accuracy:
+
+* Select a series of different seeds for training and test data, choose the seed which gives the best results. This can in effect lead to all the easy to classify samples being present in the test data while the more difficult samples are in the training data.
+* Choosing which points are considered outliers - Analyse the model results from the training and test data, select incorrectly classified points and remove them from the data, classifying them as outliers. 
+
+
+### Application of P-hacking
+
+For this we will use health insurance price data:
+
+```{r load insurance data}
+load("insurance_dat.rda") # Load dat
+summary(insurance) # Summarize data
+```
+
+
+The data contains records for 1338 individuals and contains 8 variables.
+The features are:
+
+* age - The age of the individual.
+* sex - The sex of the individual.
+* BMI - The body mass index of the individual
+* children - The number of children the individual has
+* smoker - Yes/No if the individual is a smoker
+* region - The region of the country the individual comes from
+* charges - The insurance premium for the individual
+
+Lets first run a simple linear regression to see what the results look like:
+
+```{r}
+# Fit linear regression model on the data
+fit_1 <- lm(charges ~., # Set formula 
+            data = insurance) # Set dataset
+summary(fit_1) # Summarize model
+```
+
+Here we see that age, BMI, number of children and some of the regions of the country are significant. Note that being male has a negative effect on insurance charges here. Suppose we wanted to make the case that men are being discriminated against and are forced to pay higher insurance premiums. How can we manipulate the model to make it give this result. 
+
+Well first lets look at the relationships in the data:
+
+```{r}
+# Plot BMI v Sex
+g_1 <- ggplot(insurance, aes(x = bmi, fill = sex)) +
+  geom_density(alpha = 0.5) +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +  # Remove grid 
+ labs(x = "BMI", fill = "Sex") 
+
+# Plot age v Sex
+g_2 <- ggplot(insurance, aes(x = age, fill = sex)) +
+  geom_density(alpha = 0.5) +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +  # Remove grid 
+ labs(x = "Age", fill = "Sex") 
+
+# Plot Charges v Sex
+g_3 <- ggplot(insurance, aes(x = charges, fill = sex))+
+  geom_density(alpha = 0.5) +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank())+  # Remove grid 
+ labs(x = "Charges", fill = "Sex") 
+
+# plot Charges v Sex by smoking status
+g_4 <- ggplot(insurance, aes(x = charges, fill = sex))+
+  geom_density(alpha = 0.5) +
+  facet_wrap(~smoker) +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank())  +  # Remove grid 
+ labs(x = "Charges", fill = "Sex") 
+
+# Produce Plots
+g_1
+g_2
+g_3
+g_4
+
+```
+
+In the last plot here we see that males who smoke are more likely to pay higher insurance premiums. Lets remove smoking from the model and see if this changes our results:
+
+```{r}
+# Fit second linear regression model
+fit_2 <- lm(charges ~ sex + children + bmi + region, data = insurance)
+summary(fit_2) # Summarize Model
+```
+
+That's a little better, male now has a positive coefficient that is significant at the 0.1 level. Lets try increase the significance a little more here. Perhaps the relationship between male and insurance charges is slightly different in different parts of the country.
+
+```{r}
+# Plot Charges v Sex by Region
+g_5 <- ggplot(insurance, aes(x = charges, fill = sex))+
+  geom_density(alpha = 0.5) +
+  facet_wrap(~region) +
+   theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank())  +  # Remove grid 
+ labs(x = "Charges", fill = "Sex") 
+g_5 # Generate plot
+```
+
+From this plot it looks like males may pay higher charges in the southeast, southwest and northeast. Lets exclude the northwest from our model and see what our results look like:
+
+```{r}
+# Drop northwest region
+insurance_2 <- insurance[insurance$region %in% c("southeast", "southwest", "northeast"),]
+# Run linear regression model
+fit_3 <- lm(charges ~ sex + children + bmi + region, data = insurance_2)
+summary(fit_3) # Summarize model
+
+```
+
+Now male is both positive and significant at the 5% level, sufficient to get published. 
+
+If we want some really extreme results and are will to engage in more blatant p-hacking we can classify males with low charges as "outliers" and remove them from the data:
+
+```{r Outlier class}
+# Drop males with low insurance premiums
+insurance_3 <- insurance_2[which(insurance_2$sex == "female" | # Select points which are female
+                                   (insurance_2$sex == "male" & insurance_2$charges >= 4000)),] # or male with insurance charges above 4000
+# Fit linear regression model
+fit_4 <- lm(charges ~ sex + children + bmi + region, data = insurance_3)
+# Summarize model
+summary(fit_4)
+```
+
+Male is now both extremely significant and positive, indicating that men are unfairly discriminated when it comes to insurance pricing. 
+
+### Prediction P-hacking
+
+Now suppose we were instead asked to predict presence of breast cancer using the variables we had earlier in the semester:
+
+```{r Breast Cancer Load}
+# Load data
+load("breast_cancer_data.rda")
+# Summarize data
+summary(bc_data)
+```
+
+Lets split the data into training and test and apply XGBoost:
+
+```{r}
+# Set random seed
+set.seed(123456)
+# Create test index
+test_index <- sample(1:nrow(bc_data), size = nrow(bc_data) * 0.2, replace = FALSE)
+# Create train matric
+dtrain <- xgb.DMatrix(data = as.matrix(bc_data[-test_index, 1:4]), label = bc_data$diagnosis[-test_index])
+# Create test matrix
+dtest <- xgb.DMatrix(data = as.matrix(bc_data[test_index,1:4]), label = bc_data$diagnosis[test_index])
+# Fit xgboost
+xg_model <- xgboost(data = dtrain, # Set training data
+               nrounds = 100, # Set number of rounds
+               verbose = 1, # 1 - Prints out fit
+               print_every_n = 20, # Prints out result every 20th iteration
+               objective = "binary:logistic", # Set objective
+               eval_metric = "auc",
+               eval_metric = "error") # Set evaluation metric to use
+
+xg_preds_test <- predict(xg_model, dtest) # Create predictions for xgboost model
+# Generate ROC curve
+roc_1 <- roc(bc_data$diagnosis[test_index], xg_preds_test)
+# Print xgboost model ROC
+plot.roc(roc_1, print.auc = TRUE, col = "blue", print.auc.col = "blue")
+```
+
+An AUC of 0.95 is pretty good but suppose we were told the model could only be used for deployment with an AUC of greater than 0.99. We could tune the model or we could p-hack with minimal effort. Our first pass at this could be to try a series of different seeds for choosing the training and test sets to try find a split with a higher AUC. Lets try 100 seeds, use them to split the data into training and test and see if we can find a good split that improves the AUC.  
+
+```{r}
+# Set seed
+set.seed(123456)
+# Generate random seeds
+seeds <- sample(100000:999999, size = 100)
+# Create AUC vector to store results
+auc_vec <- rep(NA, length(seeds))
+# Loop through seeds
+for(i in 1:length(seeds)){
+  # Set as seed i
+  set.seed(seeds[i])
+  # Generate test index
+  test_index <- sample(1:nrow(bc_data), size = nrow(bc_data) * 0.2, replace = FALSE)
+  # Create training data
+  dtrain <- xgb.DMatrix(data = as.matrix(bc_data[-test_index, 1:4]), label = bc_data$diagnosis[-test_index])
+  # Create test matrix
+  dtest <- xgb.DMatrix(data = as.matrix(bc_data[test_index,1:4]), label = bc_data$diagnosis[test_index])
+  # Fit XGBoost model
+  xg_model <- xgboost(data = dtrain, # Set training data
+                    nrounds = 100, # Set number of rounds
+                    verbose = 0, # 1 - Prints out fit
+                    print_every_n = 20, # Prints out result every 20th iteration
+                    objective = "binary:logistic", # Set objective
+                    eval_metric = "auc",
+                    eval_metric = "error") # Set evaluation metric to use
+  # Fit XGBoost predictions
+  xg_preds_test <- predict(xg_model, dtest) # Create predictions for xgboost model
+  # Calculate ROC curve
+  roc_hack <- roc(bc_data$diagnosis[test_index], as.numeric(as.factor(xg_preds_test)), quiet = TRUE)
+  # Store AUC
+  auc_vec[i] <- roc_hack$auc
+}
+
+```
+
+We can then check which of the seeds led to the highest p-value:
+
+```{r}
+# Join seeds and AUC
+temp <- cbind.data.frame(seeds, auc_vec)
+
+g_6 <- ggplot(temp, aes(x = auc_vec)) + 
+  geom_density(alpha = 0.8, fill = "blue") +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +
+  labs(x = "AUC", title = "AUC for Different Seeds")
+g_6
+# Print seeds and AUC
+# Find max AUC
+which.max(temp$auc_vec)
+temp[which.max(temp$auc_vec),]
+```
+
+Perfect, our 98th seed provided us with a an AUC of 0.9929, we can then use that seed to fit our final model:
+
+```{r}
+# Set best performing seed
+set.seed(249895)
+# Generate "random" test index
+test_index <- sample(1:nrow(bc_data), size = nrow(bc_data) * 0.2, replace = FALSE)
+# Create training data
+dtrain <- xgb.DMatrix(data = as.matrix(bc_data[-test_index, 1:4]), label = bc_data$diagnosis[-test_index])
+# Create test matrix
+dtest <- xgb.DMatrix(data = as.matrix(bc_data[test_index,1:4]), label = bc_data$diagnosis[test_index])
+# Fit XGBoost model
+xg_model <- xgboost(data = dtrain, # Set training data
+               nrounds = 100, # Set number of rounds
+               verbose = 1, # 1 - Prints out fit
+               print_every_n = 20, # Prints out result every 20th iteration
+               objective = "binary:logistic", # Set objective
+               eval_metric = "auc",
+               eval_metric = "error") # Set evaluation metric to use
+
+xg_preds_test_phack <- predict(xg_model, dtest) # Create predictions for hacked xgboost model
+# Calculate ROC for hacked model
+roc_2 <- roc(bc_data$diagnosis[test_index], xg_preds_test_phack)
+
+# Print xgboost model ROC
+plot.roc(roc_1, print.auc = TRUE, col = "blue", print.auc.col = "blue")
+# Print hacked xgboost model ROC
+plot.roc(roc_2, print.auc = TRUE, print.auc.x = 0, print.auc.y = 0.6, col ="red", print.auc.col = "red", add = TRUE)
+
+```
+
+An alternate and more "scientific"" p-hacking method we could use here is to apply cross-validation, find the incorrectly classified points and make sure they are in the training set. First lets run our model using cross-validation and produce predictions for each point:
+
+```{r}
+# Set seed
+set.seed(123456)
+# Generate cross-validation assignments
+cv_index <- sample(1:10, size = nrow(bc_data), replace = TRUE)
+# Create vector to store predictions
+cv_preds <- rep(NA, nrow(bc_data))
+# Loop through to perform cross-validation
+for(i in 1:10){
+  # Create train matrix
+  dtrain <- xgb.DMatrix(data = as.matrix(bc_data[cv_index != i, 1:4]), label = bc_data$diagnosis[cv_index != i])
+  # Create test matrix
+  dtest <- xgb.DMatrix(data = as.matrix(bc_data[cv_index == i,1:4]), label = bc_data$diagnosis[cv_index == i])
+  # Fit XGBoost model
+  xg_model <- xgboost(data = dtrain, # Set training data
+                      nrounds = 100, # Set number of rounds
+                      verbose = 1, # 1 - Prints out fit
+                      print_every_n = 20, # Prints out result every 20th iteration
+                      objective = "binary:logistic", # Set objective
+                      eval_metric = "auc",
+                      eval_metric = "error") # Set evaluation metric to use
+  # Save cross-validated predictions
+  cv_preds[cv_index == i] <- predict(xg_model, dtest) # Create predictions for xgboost model
+}
+
+```
+
+Next we want to calculate how different the cross-validated predictions are from the actual class. We then want to select the 20% of the data that is easiest to predict for our test set:
+
+```{r}
+# Calculate distance between predictions and true label
+cv_preds_distance <- abs(bc_data$diagnosis - cv_preds)
+# Calculate the 20th quantile
+temp <- quantile(cv_preds_distance, c(.2)) 
+# Print quantile value
+temp
+# Create test index with easiest to predict samples
+test_index <- which(cv_preds_distance <= temp)
+```
+
+Next we can apply our model using this 20% as our test set. 
+
+```{r}
+# Create train matrix
+dtrain <- xgb.DMatrix(data = as.matrix(bc_data[-test_index, 1:4]), label = bc_data$diagnosis[-test_index])
+# Create test matrix
+dtest <- xgb.DMatrix(data = as.matrix(bc_data[test_index,1:4]), label = bc_data$diagnosis[test_index])
+# Fit XGBoost model
+xg_model <- xgboost(data = dtrain, # Set training data
+                    nrounds = 100, # Set number of rounds
+                    verbose = 1, # 1 - Prints out fit
+                    print_every_n = 20, # Prints out result every 20th iteration
+                    objective = "binary:logistic", # Set objective
+                    eval_metric = "auc",
+                    eval_metric = "error") # Set evaluation metric to use
+# Create p-hacked preditions
+xg_preds_test_phack_2 <- predict(xg_model, dtest) # Create predictions for xgboost model
+# Create ROC for hacked predictions
+roc_3 <- roc(bc_data$diagnosis[test_index], xg_preds_test_phack_2)
+
+# Print xgboost model ROC
+plot.roc(roc_1, print.auc = TRUE, col = "blue", print.auc.col = "blue")
+# Print XGBoost hacked ROC
+plot.roc(roc_2, print.auc = TRUE, print.auc.x = 0.2, print.auc.y = 0.6, col ="red", print.auc.col = "red", add = TRUE)
+# Print XGBoost efficiently hacked ROC
+plot.roc(roc_3, print.auc = TRUE, print.auc.x = 0.2, print.auc.y = 0.2, col ="black", print.auc.col = "black", add = TRUE)
+
+```
+
+This has resulted in a perfectly accurate model with an AUC of 1. Perfectly acceptable for deployment. 
+
+### How to avoid P-hacking
+
+* Decide your statistical parameters early and report any changes. 
+* Decide what the target sample size is prior to beginning analysis.
+* Define outliers prior to analyzing data/fitting a model.
+* Correct for multiple testing/analysis. 
+* Try to replicate own results.
+* Analyse data with multiple methods to find consistent results. 
+* Use cross-validation to measure accuracy so all points appear in the test set at least one time. 
+
+
+### How to detect P-hacking
+
+* Look at the data collection process, when was the data collected?
+* Look at points defined as outliers, what was the justification for this? Does the justification and definition of outliers make sense?
+* Ask if the results have been corrected for multiple testing? 
+* Find out the full analysis process used and the models which were applied. Were these included in the final report? Why were certain models left out?
+* Ask about model testing procedures, how was the data split into training and test sets? Was this a random split? Were multiple splits used? How do cross-validated results compare with the training and test set results? 
+
+
+
+# Actionable Insights
+
+
+### Extracting Insights
+
+One of the steps in extracting insights is to ask the following questions. As we move down the chain we improve the depth of the analysis that we are carrying out and increase the probability of generating truly actionable insights:
+
+
+1. What happened? - Descriptive Analytics
+2. How many, how often, where? - Diagnostic Analytics
+3. Where exactly is the challenge? - Diagnostic Analytics
+4. What actions are needed? - Diagnostic Analytics
+5. Why is this happening? - Diagnostic Analytics
+6. What will happen if these trends continue? - Predictive Analytics
+7. What will happen next? - Predictive Analytics
+8. What actions should we take? - Prescriptive Analytics
+
+
+Many industries have decided to rapidly adopt machine learning over the past few years, however, while high level executives are often very interested in the idea of machine learning and have heard great things about it in the media. They often struggle to make use of machine learning results at their own company. Instead while they may have accurate model the results often contribute little or not at all to the success of the business. In effect there is a failure to take action off the back of results generated from machine learning models. 
+
+It is crucial that the results coming from machine learning models are converted to actionable insights. There are some steps which you as an analyst can take to enable this to take place.
+
+
+### Put Insights at the Top of the Presentation Hierarchy
+
+When presenting results from a machine learning analysis many people focus on the application on the models and the data preparation process which they went through. This makes sense as that is the aspect of analysis which the vast majority of the analysis time has been spent on. In addition as machine learning and analysis is generally taught in an academic setting this process can make natural sense, following the example of scientific papers. This often ends up with a presentation process as follows:
+
+1. Discuss the background of the project.
+2. Discuss the data sources used in the project. 
+3. Use graphs and diagrams to highlight the properties of the data.
+4. Present the model building and tuning process. 
+5. Discuss the modelling results.
+6. Conclude with insights from the modelling results. 
+7. Call for actions when appropriate.
+
+This is generally a very solid process internally in industry and represents the logical flow of the analysis. The discussion of background, the data and the modelling process allows the audience to have a true understanding of the data and gives them a chance to understand the results and how they were achieved.  
+
+However, this is usually the part of the analysis that is of least interest and use to the recipients of the results, who are looking for insights into the process. They are often either very familiar with the data, though often not in a similar fashion and are not particularly interested in data exploration and preparation. Instead they are most interested in the insights which come from the data. They may then wish for these insights to be backed up with evidence, perhaps by presenting modelling results. Those who are high level business executives are usually short on time and lack the patience to hear about a detailed modelling process. 
+
+For these sorts of viewers an invert process can lead to far greater results. Here we should start with high level conclusions and insights to get the viewers interested in the analysis. This can then be followed up with reasoning which led to the results. Here we can take a lesson from consulting where the process is usually presented as:
+
+* Overview
+* Executive summary
+* Recommendations
+* Detailed results
+* Methodology
+
+Using this inverted process we can draw the attention of high level viewers and provide them with real benefits by recommending actions quickly during the process. 
+
+### Data Visualization
+
+The vast majority of the data visualization is generally either exploratory data visualization where we are seeking to understand the trends and patterns in the data or summary visualizations where we are trying to visualize the results of our models. 
+
+In order to present actionable insights we instead want to craft visualizations to make or support a point we are particularly interested in. Here the visualization should be crafted to draw the viewers eye to the important pieces of information in the graph.
+
+Here we can employ a data hierarchy where design the graph to draw attention to key parts of the graph first while decreasing the other aspects of the plot which we do not want the viewer to focus on. 
+
+
+To demonstrate drawing some insights here we are going to use bank telemarketing data, lets load the data and run an xgboost model.
+
+```{r}
+# Load data
+load("bank_marketing_data.rda")
+summary(use_db) # Summarise data
+# Convert data to matrix
+x_vars <- model.matrix(y ~., data = use_db[,1:14])[,-1]
+# Create DMatrix
+dtrain <- xgb.DMatrix(data = x_vars, label = use_db$y)
+# Fit XGBoost
+bst <- xgboost(data = dtrain, # Set training data
+                    nrounds = 100, # Set number of rounds
+                    verbose = 1, # 1 - Prints out fit
+                    print_every_n = 20, # Prints out result every 20th iteration
+                    objective = "binary:logistic", # Set objective
+                    eval_metric = "auc",
+                    eval_metric = "error") # Set evaluation metric to use
+```
+
+To decide feature importance and explore the data we will use SHAP values which measure the impact of variables taking into account the interaction with other variables.
+
+"Shapley values calculate the importance of a feature by comparing what a model predicts with and without the feature. However, since the order in which a model sees features can affect its predictions, this is done in every possible order, so that the features are fairly compared."
+
+We previously used these values to create an explainer plot however, in general SHAP values are a better measure of importance for variables than that calculated by decrease in gini/decrease in accuracy. They allow us to decompose individual predictions and can make black box models interpret-able.
+
+We can calculate SHAP values for each observation to identify the factors that contributed to the prediction as follows:
+```{r}
+shap_values <- predict(bst,
+                     x_vars,
+                    predcontrib = TRUE,
+                    approxcontrib = F)
+
+shap_values[1,]
+```
+
+We can also use SHAP to get an overall variable importance which will often be quite different to that of the importance from the XGBoost model;
+
+
+```{r}
+# Extract standard importance
+imp_mat <- xgb.importance(model = bst)
+# Plot standard importance (top 10 variables)
+xgb.plot.importance(imp_mat, top_n = 10)
+
+
+# Calculate SHAP importance
+shap_result <- shap.score.rank(xgb_model = bst, 
+                X_train =x_vars,
+                shap_approx = F)
+# Plot SHAP importance
+var_importance(shap_result, top_n=10)
+
+```
+
+As we can see from the graph, standard model importance says that previous days before contact is the most important variable while SHAP says that if the individual was contacted by telephone is the most important variable. 
+
+One issue with variable importance plots is that they do not give us any information about the direction of the relationship between the variables and the response. We could use partial dependency plots but then we need to analyse one variable at a time. With SHAP values we can view the contribution of the top variables to the predictions for each point and analyse multiple variables at the same time. 
+
+```{r}
+
+shap_long = shap.prep(shap = shap_result,
+                           X_train = x_vars, 
+                           top_n = 10)
+
+
+plot.shap.summary(data_long = shap_long)
+
+```
+
+This is a great example of an exploratory graph, where we can generate a lot of insight into the data such as contacting individuals be land-line is likely ineffective and that older consumers are more likely to respond positively to a marketing campaign. In addition, contacting an individual multiple times has a negative effect on a  campaign response. 
+
+To convert these insights to display graphs we could use some of the following plots:
+
+```{r}
+# Count results
+temp <- count(use_db, contact, y)
+# Create transperancy
+temp$alpha_vec <- c(0.7, 1, 0.7, 0.5)
+# Create plot
+g_7 <- ggplot(temp, aes(x = contact, fill = factor(y), y = n , alpha = alpha_vec)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +
+  scale_fill_manual(values = c("1" = "blue", "0" = "red"),
+                    labels = c("1" = "Succesful", "0" = "Unsuccesful")) +
+  labs(x = "Type of Contact", y = "Customers", fill = "Campaign \n Result") +
+  annotate("text", x = 1.2, y = 5000, label = "14.7%", size = 5) +
+  annotate("text", x = 2.2, y = 1500, label = "5.2%", size = 5) +
+  guides(alpha = "none")
+# Generate plot
+g_7
+
+```
+
+Another trick we can use here is to convert the title from summarizing the plot to the insight, a question we want the viewers to ask or an action which we want the viewer to take from the graph. 
+
+
+```{r}
+# Count cases
+temp <- count(use_db, contact, y)
+# Create transperancy
+temp$alpha_vec <- c(0.7, 1, 0.7, 0.5)
+# Create plot
+g_8 <- ggplot(temp, aes(x = contact, fill = factor(y), y = n , alpha = alpha_vec)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +
+  scale_fill_manual(values = c("1" = "blue", "0" = "red"),
+                    labels = c("1" = "Succesful", "0" = "Unsuccesful")) +
+  labs(x = "Type of Contact", y = "Customers", fill = "Campaign \n Result",
+       title = "Does Contact Medium Affect Campaign Success?") +
+  annotate("text", x = 1.2, y = 5000, label = "14.7%", size = 5) +
+  annotate("text", x = 2.2, y = 1500, label = "5.2%", size = 5) +
+  guides(alpha = "none")
+# Generate plot
+g_8
+```
+
+The course of action we can recommend from this is that future marketing campaigns take place primarily via cellular as this appears to have a far higher success rate resulting in more conversions and less wasted contacts. 
+
+### Have unsuccesful results ready to present
+
+When presenting to a particularly informed and savvy audience they will often question excursively positive results. It can often be extremely helpful to have prepared some details on negative results and unimportant variables to display the contrast between those results and the results which the insights/calls for action have been based on. 
+
+```{r}
+temp_2 <- count(use_db, day_of_week, y)
+# Create plot
+g_9 <- ggplot(temp_2, aes(x = day_of_week, fill = factor(y), y = n)) +
+  geom_bar(position = "dodge", stat = "identity", alpha = 0.9) +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) +
+  scale_fill_manual(values = c("1" = "blue", "0" = "red"),
+                    labels = c("1" = "Succesful", "0" = "Unsuccesful")) +
+  labs(x = "Day of the Week", y = "Customers", fill = "Campaign \n Result",
+       title = "Does Day of the Week Affect Campaign Success?") +
+  guides(alpha = "none")
+# Generate plot
+g_8
+g_9
+
+
+```
+
+ 
+This can be a very effective response to questions regarding the veracity of the results. As positive result can often appear a lot more powerful when contrasted with a strong negative results. In general these should be kept in reserve in case of questions, however if displaying data using a visualization or result format you expected the audience to be relatively unfamiliar with then it can often be useful to show how a negative and positive result would look for this plot type.
+
+## Conclusion
+
+Generating insights is one of the key aspects of machine learning and converting insight into action can often lead to very positive outcomes from the business or organization. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
